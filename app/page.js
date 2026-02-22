@@ -185,9 +185,9 @@ export default function Home() {
             カスタム削除
           </button>
 
-          <a href="/template" style={{ fontSize: 12, opacity: 0.9 }}>
+          {/* <a href="/template" style={{ fontSize: 12, opacity: 0.9 }}>
             CSVテンプレを見る
-          </a>
+          </a> */}
         </div>
 
         <div style={{ marginTop: 12, fontSize: 12, opacity: 0.7 }}>
