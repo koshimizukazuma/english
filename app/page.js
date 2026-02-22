@@ -163,7 +163,7 @@ export default function Home() {
         </div>
 
         <div style={{ marginTop: 10, display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
-          <label style={{ fontSize: 13, cursor: "pointer" }}>
+          {/* <label style={{ fontSize: 13, cursor: "pointer" }}>
             <input
               type="file"
               accept=".csv"
@@ -175,15 +175,15 @@ export default function Home() {
               }}
             />
             📥 CSVで問題追加
-          </label>
+          </label> */}
 
-          <button
+          {/* <button
             onClick={clearCustom}
             style={{ fontSize: 12, opacity: 0.7, border: "none", background: "transparent", cursor: "pointer" }}
             title="カスタム問題を削除"
           >
             カスタム削除
-          </button>
+          </button> */}
 
           {/* <a href="/template" style={{ fontSize: 12, opacity: 0.9 }}>
             CSVテンプレを見る
