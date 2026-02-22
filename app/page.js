@@ -1,166 +1,203 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
-const QUESTIONS = [
-  {
-    id: "r-001",
-    type: "choice",
-    en: "Could we get separate checks, please?",
-    jpChoices: ["お会計は別々でお願いします", "お会計を先にお願いします", "予約を変更したいです", "おすすめは何ですか？"],
-    correctIndex: 0,
-    note: "Separate checks = 別会計",
-  },
-  {
-    id: "t-001",
-    type: "blank",
-    en: "I'd like to make a ____ for two.",
-    blankChoices: ["reservation", "decision", "problem", "picture"],
-    correctIndex: 0,
-    jpHint: "（ヒント）予約",
-    answerText: "reservation",
-  },
+const CATEGORIES = [
+  { key: "restaurant", label: "🍽 レストラン" },
+  { key: "airport", label: "✈ 空港" },
+  { key: "hotel", label: "🏨 ホテル" },
+  { key: "sightseeing", label: "🗺 観光" },
+  { key: "transport", label: "🚕 移動" },
 ];
 
-function load(key, fallback) {
-  if (typeof window === "undefined") return fallback;
-  try {
-    const v = localStorage.getItem(key);
-    return v ? JSON.parse(v) : fallback;
-  } catch {
-    return fallback;
+function csvSplitLine(line) {
+  // Simple CSV splitter supporting quotes.
+  const out = [];
+  let cur = "";
+  let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQ && line[i + 1] === '"') { // escaped quote
+        cur += '"';
+        i++;
+      } else {
+        inQ = !inQ;
+      }
+      continue;
+    }
+    if (ch === "," && !inQ) {
+      out.push(cur);
+      cur = "";
+      continue;
+    }
+    cur += ch;
   }
-}
-function save(key, value) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {}
+  out.push(cur);
+  return out.map(s => s.trim());
 }
 
-export default function QuizPage() {
-  const [index, setIndex] = useState(0);
-  const [xp, setXp] = useState(0);
-  const [streak, setStreak] = useState(0);
-  const [picked, setPicked] = useState(null);
-  const [result, setResult] = useState(null);
-
-  const q = QUESTIONS[index];
+export default function Home() {
+  const router = useRouter();
+  const [cat, setCat] = useState("restaurant");
+  const [customCount, setCustomCount] = useState(0);
 
   useEffect(() => {
-    const state = load("tep_state", null);
-    if (state) {
-      setIndex(state.index ?? 0);
-      setXp(state.xp ?? 0);
-      setStreak(state.streak ?? 0);
-    }
+    try {
+      const saved = localStorage.getItem("tep_category");
+      if (saved) setCat(saved);
+      const custom = localStorage.getItem("tep_custom_questions");
+      if (custom) setCustomCount(JSON.parse(custom).length || 0);
+    } catch {}
   }, []);
 
-  useEffect(() => {
-    save("tep_state", { index, xp, streak });
-  }, [index, xp, streak]);
-
-  const choices = useMemo(() => {
-    if (q.type === "choice") return q.jpChoices;
-    return q.blankChoices;
-  }, [q]);
-
-  const prompt = useMemo(() => {
-    if (q.type === "choice") return q.en;
-    return q.en;
-  }, [q]);
-
-  const select = (i) => {
-    if (result) return;
-    setPicked(i);
-    const ok = i === q.correctIndex;
-    setResult(ok ? "ok" : "ng");
-
-    if (ok) setXp((v) => v + 10);
-
-    // 次へ（1.0秒後）
-    setTimeout(() => {
-      setPicked(null);
-      setResult(null);
-      setIndex((v) => (v + 1) % QUESTIONS.length);
-    }, 900);
+  const start = () => {
+    try {
+      localStorage.setItem("tep_category", cat);
+      localStorage.setItem("tep_mode", "daily"); // YouTube導線：まずは今日の3問へ
+    } catch {}
+    router.push("/quiz");
   };
 
-  // Streak：1日1回正解したら+1（超簡易）
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const today = new Date().toISOString().slice(0, 10);
-    const last = localStorage.getItem("tep_last_day");
-    if (last !== today) {
-      // 日付が変わったら、今日の初回正解で更新するためリセット準備だけ
-      // （厳密な連続判定は後で）
+  const importCsv = async (file) => {
+    const text = await file.text();
+    const lines = text.replace(/\r/g, "").split("\n").filter(l => l.trim().length);
+    if (!lines.length) return alert("CSVが空です");
+
+    const header = csvSplitLine(lines.shift()).map(s => s.trim());
+    const idx = (name) => header.indexOf(name);
+
+    const required = ["id","cat","type","en","choice1","choice2","choice3","choice4","answer","note"];
+    for (const k of required) {
+      if (idx(k) === -1) return alert(`ヘッダーに ${k} がありません`);
     }
-  }, []);
+
+    const items = lines.map((line) => {
+      const cols = csvSplitLine(line);
+      const q = {
+        id: cols[idx("id")] || "",
+        cat: cols[idx("cat")] || "",
+        type: cols[idx("type")] || "choice",
+        en: cols[idx("en")] || "",
+        choices: [
+          cols[idx("choice1")] || "",
+          cols[idx("choice2")] || "",
+          cols[idx("choice3")] || "",
+          cols[idx("choice4")] || "",
+        ],
+        answer: Number(cols[idx("answer")]),
+        note: cols[idx("note")] || "",
+      };
+      return q;
+    }).filter(q =>
+      q.id &&
+      ["restaurant","airport","hotel","sightseeing","transport"].includes(q.cat) &&
+      ["choice","blank"].includes(q.type) &&
+      q.en &&
+      q.choices.every(Boolean) &&
+      Number.isFinite(q.answer) && q.answer >= 0 && q.answer <= 3
+    );
+
+    localStorage.setItem("tep_custom_questions", JSON.stringify(items));
+    setCustomCount(items.length);
+    alert(`CSVを読み込みました：${items.length}問`);
+  };
+
+  const clearCustom = () => {
+    localStorage.removeItem("tep_custom_questions");
+    setCustomCount(0);
+    alert("カスタム問題を削除しました");
+  };
 
   return (
     <div style={{ padding: 24, maxWidth: 520, margin: "0 auto" }}>
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-        <h1 style={{ margin: 0, fontSize: 18 }}>Travel English（無料）</h1>
-        <div style={{ fontSize: 14 }}>
-          XP: <b>{xp}</b>　Streak: <b>{streak}</b>
+      <h1 style={{ margin: "8px 0 0", fontSize: 22 }}>Travel English（無料）</h1>
+      <p style={{ marginTop: 8, opacity: 0.75 }}>
+        YouTubeで見た問題を、アプリでサクッと復習。<br />
+        「今日の3問」→「復習（間違いだけ）」が最短ルート。
+      </p>
+
+      <div style={{ marginTop: 14, padding: 16, borderRadius: 14, background: "#fff", boxShadow: "0 1px 6px rgba(0,0,0,0.06)" }}>
+        <div style={{ fontSize: 13, opacity: 0.7 }}>カテゴリを選んでスタート</div>
+
+        <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+          {CATEGORIES.map((c) => (
+            <button
+              key={c.key}
+              onClick={() => setCat(c.key)}
+              style={{
+                padding: 14,
+                borderRadius: 12,
+                border: `1px solid ${cat === c.key ? "#111827" : "#e5e7eb"}`,
+                background: cat === c.key ? "#f1f5f9" : "#fff",
+                textAlign: "left",
+                cursor: "pointer",
+                fontSize: 15,
+              }}
+            >
+              {c.label}
+            </button>
+          ))}
         </div>
-      </header>
 
-      <div style={{ marginTop: 16, padding: 16, borderRadius: 14, background: "#fff", boxShadow: "0 1px 6px rgba(0,0,0,0.06)" }}>
-        <div style={{ fontSize: 12, opacity: 0.7 }}>{q.type === "choice" ? "日本語を選ぶ" : "空欄を埋める"}</div>
+        <button
+          onClick={start}
+          style={{
+            marginTop: 14,
+            width: "100%",
+            padding: 14,
+            borderRadius: 12,
+            border: "none",
+            background: "#111827",
+            color: "#fff",
+            fontSize: 16,
+            cursor: "pointer",
+          }}
+        >
+          今日の3問をはじめる ▶
+        </button>
 
-        <div style={{ fontSize: 20, marginTop: 10, lineHeight: 1.4 }}>
-          {q.type === "blank" ? (
-            <>
-              {q.en.split("____")[0]}
-              <span style={{ padding: "2px 10px", borderRadius: 999, background: "#f1f5f9" }}>____</span>
-              {q.en.split("____")[1]}
-            </>
-          ) : (
-            prompt
-          )}
+        <div style={{ marginTop: 12, fontSize: 12, opacity: 0.7 }}>
+          カスタム問題：<b>{customCount}</b>問
         </div>
 
-        {q.type === "blank" && (
-          <div style={{ marginTop: 8, fontSize: 13, opacity: 0.8 }}>{q.jpHint}</div>
-        )}
+        <div style={{ marginTop: 10, display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+          <label style={{ fontSize: 13, cursor: "pointer" }}>
+            <input
+              type="file"
+              accept=".csv"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) importCsv(f);
+                e.target.value = "";
+              }}
+            />
+            📥 CSVで問題追加
+          </label>
 
-        <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
-          {choices.map((c, i) => {
-            const isPicked = picked === i;
-            const isCorrect = result && i === q.correctIndex;
-            const isWrongPicked = result === "ng" && isPicked && i !== q.correctIndex;
+          <button
+            onClick={clearCustom}
+            style={{ fontSize: 12, opacity: 0.7, border: "none", background: "transparent", cursor: "pointer" }}
+            title="カスタム問題を削除"
+          >
+            カスタム削除
+          </button>
 
-            const bg = isCorrect ? "#dcfce7" : isWrongPicked ? "#fee2e2" : "#fff";
-            const bd = isCorrect ? "#22c55e" : isWrongPicked ? "#ef4444" : "#e5e7eb";
-
-            return (
-              <button
-                key={i}
-                onClick={() => select(i)}
-                style={{
-                  textAlign: "left",
-                  padding: 14,
-                  borderRadius: 12,
-                  border: `1px solid ${bd}`,
-                  background: bg,
-                  cursor: "pointer",
-                  fontSize: 15,
-                }}
-              >
-                {c}
-              </button>
-            );
-          })}
+          <a href="/template" style={{ fontSize: 12, opacity: 0.9 }}>
+            CSVテンプレを見る
+          </a>
         </div>
 
         <div style={{ marginTop: 12, fontSize: 12, opacity: 0.7 }}>
-          {q.note ? `メモ：${q.note}` : "毎日3問だけでもOK。"}
+          URL：<span style={{ fontFamily: "ui-monospace" }}>english-rant.vercel.app/quiz</span>
         </div>
       </div>
 
-      <footer style={{ marginTop: 16, fontSize: 12, opacity: 0.7 }}>
-        YouTubeから来た人向け：毎日更新で語彙が増えます。
-      </footer>
+      <div style={{ marginTop: 14, fontSize: 12, opacity: 0.7 }}>
+        ※ログイン不要 / 無料。XP・Streak・復習は端末内に保存されます。
+      </div>
     </div>
   );
 }
